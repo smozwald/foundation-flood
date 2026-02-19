@@ -1,4 +1,4 @@
-# foundation-crop-failure
+# foundation-flood
 
 This portfolio piece aims to utilize foundation vision models to improve forecasting of crop yield failure, focusing on the relationship between soil memory and inundation in the Skåne region, Sweden.
 
