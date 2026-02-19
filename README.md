@@ -3,7 +3,11 @@
 This portfolio piece aims to utilize foundation vision models to improve forecasting of crop yield failure, focusing on the relationship between soil memory and inundation in the Skåne region, Sweden.
 
 # Introduction
-Literature review of the impact of winter floods on crop dormancy and the "winter-kill" phenomenon in Scandinavia.
+Privthi model is used to track water coverage in flood events, with high accuracy using Sentinel-2. The Skane region of Sweden is interesting as there is a high incidence of floods which appear in the years of Sentinel-2 coverage, with higher recurrence at higher latitudes.
+[Flood Risk Assessment for the Kävlinge River for Present and Future Climate Scenarios using HEC-RAS Rain-on-Grid (Roosli, 2024)](https://lup.lub.lu.se/student-papers/record/9163737) overviews past floods in the Kavlinge river, a basin with several past high-discharge events.
+
+Data for this region can be found for discharge, precipitation and other things at (https://www.smhi.se/data).
+For this project, we use precipitation from Horby, and discharge from Hogsmolla station.
 
 # Methodology
 Methodology of a physics-informed solution using spatiotemporal embeddings to isolate pre-season legacy risk from in-season rainfall spikes.
