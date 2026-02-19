@@ -9,6 +9,17 @@ Privthi model is used to track water coverage in flood events, with high accurac
 Data for this region can be found for discharge, precipitation and other things at (https://www.smhi.se/data).
 For this project, we use precipitation from Horby, and discharge from Hogsmolla station.
 
+River discharge is strongly linked not just to immediate rainfall effects, but to environmental conditions and the buildup of moisture through a season.
+The below graph shows the correlation at the aforementioned sites between rainfall and discharge when utilizing immediate preceding monthly rainfall, and 6 month aggregations.
+<img width="1600" height="600" alt="image" src="https://github.com/user-attachments/assets/d886a9f5-4961-4cda-8802-efaadd160236" />
+
+This is well-considered in flood modelling and prediction.
+New advances in machine learning allow for further iteration on flood models. In the context of agricultural risk, floods are an important natural hazard to account for. What this project investigates is the potential to assess risk for agricultural fields under various rainfall scenarios, utilizing typical data sources and features in flood modelling (Topographic Water Index, distance to river, precipitation) as well as Google AlphaEarth Embeddings for the year preceding the agricultural season. For the predictive y-variable (flooded area), we estimate this for past years using the Privthi water mapping model, which achieves high accuracy at detecting flooded pixels utilizing Sentinel-2 data.
+The ultimate goal is to create a model utilizing as a base input, the AlphaEarth embeddings + additional data, and then provide continuous rainfall on a per pixel basis, predicting when a pixel may become flooded.
+
+Data and Models are to be logged using MLOps, as part of creating a good portfolio piece.
+
+
 # Methodology
 Methodology of a physics-informed solution using spatiotemporal embeddings to isolate pre-season legacy risk from in-season rainfall spikes.
 
