@@ -25,32 +25,27 @@ Methodology of a physics-informed solution using spatiotemporal embeddings to is
 
 # Plan
 
-## Phase 1 - Base Data
-- [ ] Outline project plan
-- [x] Set up cloud environment on Google Earth Engine and BigQuery
-- [ ] Literature review of winter wheat and rapeseed flood tolerance
-- [ ] Collect Jordbruksverket LPIS field boundaries (Jordbruksblock) for Skåne
-- [ ] Filter field polygons to those intersecting high-risk river buffers (Kävlingeån)
-- [ ] Identify peak rainfall spikes and discharge events for each winter season (2015-2024)
-- [ ] Create and ingest historical meteorological data and field geometries into BigQuery tables
+## Phase 1 - Notebook 01: Database Setup & GEE Ground Truth
+- [x] Set up cloud environment on Google Earth Engine (GEE) and BigQuery
+- [ ] **Database Infrastructure:** Deploy PostGIS-enabled Supabase instance and define schemas for longitudinal pixel data
+- [ ] **River Delineation:** Programmatically define the Po River corridor (5km buffer) as the primary AOI
+- [ ] **GEE SAR Pipeline:** Extract and process Sentinel-1 GRD (2015–2024) on-the-fly (Speckle filtering, Terrain Correction)
+- [ ] **Water Masking:** Execute Otsu thresholding on GEE to generate binary inundation masks
+- [ ] **Data Ingestion:** Stream GEE results and Topographic metrics (HAND, TWI) into Supabase static and history tables
 
-## Phase 2 -- Collect and collate all data
-- [ ] Notebook to test extracting target fields using Jordbruksverket LPIS data
-- [ ] Create pipeline to extract representative points per field (Centroid and Lowest Elevation Point)
-- [ ] Extract AlphaEarth Satellite Embeddings for representative points during the November legacy window
-- [ ] Use Prithvi-EO-2.0 and Sentinel-1 SAR to generate field-level flood masks (Jan-Mar)
-- [ ] Calculate daily inundation reduction rates for fields to identify drainage stagnation
-- [ ] Update BigQuery Tables to include embeddings and topographic wetness indices
-- [ ] Join field-level saturation DNA with historical flood outcomes
+## Phase 2 - Notebook 02: Embedding Analysis & MLflow
+- [ ] **Foundation Benchmarking:** Use `rs-embed` to extract and compare Prithvi-EO-2.0 and Clay embeddings for pre-season windows
+- [ ] **Meteorological Join:** Integrate precipitation and discharge data with Supabase records via SQL views
+- [ ] **Experiment Tracking:** Configure MLflow to track model architectures, hyperparameters, and embedding versions
+- [ ] **Hypothesis Testing:** Compare baseline rainfall models against embedding-enriched models to validate the "Soil Memory" effect
 
-## Phase 3
-- [ ] Set up model tracking backend using MLflow
-- [ ] Initial modeling in notebooks: Compare in-season rainfall models against models enriched with pre-season embeddings
-- [ ] Assessment of model viability for long-term forecasting using twin-year scenarios (e.g., 2022 vs 2024)
-- [ ] Assessment of best data preparation and topographic feature weighting
-- [ ] Test data on unseen winter cycles to validate predictive power of soil memory
+## Phase 3 - Scriptification & System Engineering
+- [ ] **Modularization:** Refactor notebook logic into a clean Python package structure (`/src`)
+- [ ] **ETL Automation:** Formalize the GEE-to-Supabase pipeline as a CLI-driven script for reproducibility
+- [ ] **MLOps Pipeline:** Finalize training and logging workflows using MLflow and Vertex AI
+- [ ] **Validation:** Run the script-base against unseen winter cycles to confirm performance stability
 
-## Phase 4
-- [ ] Track models online using MLOps (Vertex AI and MLflow)
-- [ ] Simulation of addition of new SAR and meteo data for seasonal risk serving
-- [ ] Serve model predictions via a decision support interface for field-level vulnerability
+## Phase 4 - Agentic Scaling & Deployment
+- [ ] **Agent Development:** Build an LLM-based agent capable of calling repository scripts to analyze new regions
+- [ ] **Multi-Basin Execution:** Enable agent to delineate new rivers, trigger GEE processing, and populate new Supabase datasets
+- [ ] **Decision Support:** Create a dashboard to visualize field-level vulnerability under various simulated rainfall scenarios
