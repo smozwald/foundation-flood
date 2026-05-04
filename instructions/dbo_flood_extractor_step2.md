@@ -2,6 +2,7 @@
 
 Two scripts are required. Build and validate against station **000257** before
 batching. Do not batch until both scripts pass `--test` cleanly.
+SCRIPT 1 IS COMPLETE AND VALIDATED. THE PURPOSE OF THIS IS TO WORK ON SCRIPT 2, WITH SCRIPT 1 SOLELY INFORMATION FOR YOU. YOU DO NOT NEED TO OPEN IT.
 
 ---
 
