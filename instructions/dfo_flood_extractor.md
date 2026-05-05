@@ -40,8 +40,8 @@ site navigation. Do not hardcode — verify the actual URL structure for station
 The station page contains:
 1. A downloadable CSV of daily discharge values.
 2. A flood-category visualisation (table or chart) showing discharge threshold
-   values for five return-period bands: 1.5–2 yr, 2–5 yr, 5–10 yr, 10–20 yr,
-   20+ yr. (This is the second of two figures)
+   values for five return-period bands: 2-5 yr, 5–10 yr, 10-25 yr, 25-50vyr,
+   50+ yr. (This is the second of two figures) ...
 
 **Threshold extraction strategy:**
 - First attempt: parse threshold values from the HTML page (look for a table,

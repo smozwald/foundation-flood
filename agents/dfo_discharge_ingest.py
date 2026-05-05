@@ -16,9 +16,11 @@ import re
 import sys
 import uuid
 from datetime import date, datetime, timedelta
+import time
 
 import numpy as np
 import pandas as pd
+from scipy import stats
 import psycopg2
 import requests
 from bs4 import BeautifulSoup
@@ -52,11 +54,11 @@ DATE_START = date(2015, 1, 1)
 DATE_END = date(2025, 12, 31)
 
 RETURN_PERIOD_LABELS = {
-    1: "1.5-2 yr",
-    2: "2-5 yr",
-    3: "5-10 yr",
-    4: "10-20 yr",
-    5: "20+ yr",
+    1: "2-5 yr",
+    2: "5-10 yr",
+    3: "10-25 yr",
+    4: "25-50 yr",
+    5: "50+ yr",
 }
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (flood-risk-research/1.0)"}
@@ -223,209 +225,124 @@ def fetch_and_parse_csv(csv_url):
 
 
 # ---------------------------------------------------------------------------
-# Threshold extraction — image analysis
+# Threshold extraction — CSV Analysis
 #
 # The DFO "entire record" chart has horizontal coloured background bands:
-#   purple  → category 5  (20+ yr)
-#   pink    → category 4  (10-20 yr)
-#   red     → category 3  (5-10 yr)
-#   orange  → category 2  (2-5 yr)
-#   yellow  → category 1  (1.5-2 yr)
+#   purple  → category 5  (50+ yr)
+#   pink    → category 4  (25-50 yr)
+#   red     → category 3  (10-25 yr)
+#   orange  → category 2  (5-10 yr)
+#   yellow  → category 1  (2-5 yr)
 #   white   → below all thresholds
 #
 # Strategy:
-#   1. OCR the left y-axis strip → pixel-y to discharge linear map.
-#   2. Compute row-median RGB across the chart area.
-#   3. Find the coloured region (sat > 12) → bottom = threshold_1.
-#   4. Within that region, detect colour transitions (large jump in R-B or G
-#      channel) → boundaries between categories = thresholds 2-5.
+#   1. Download the CSV
+#   2. Calculate if dataset is complete for GEV/Gumbel analysis
+#   3. Will calculate thresholds based on entire dataset, using GEV where complete.
 # ---------------------------------------------------------------------------
 
-def _build_axis_scale(img_array):
+FLOOD_RETURN_PERIODS = {
+    2:  1,
+    5:  2,
+    10: 3,
+    25: 4,
+    50: 5,
+}
+
+MIN_MONTHS_FOR_COMPLETE_YEAR = 9  # exclude partial years (e.g. current year)
+MIN_YEARS_FOR_GEV            = 15  # below this, GEV MLE is too unstable → Gumbel
+GEV_SHAPE_LIMIT              = 2.0 # |ξ| beyond this → degenerate fit → Gumbel
+
+
+def _extract_annual_maxima(csv_bytes: bytes) -> pd.Series:
     """
-    OCR the left strip of the image to extract y-axis labels.
-    Returns (slope, intercept) such that discharge = slope * pixel_y + intercept,
-    or None if fewer than 2 labels found.
+    Parse a discharge CSV (Date, Discharge (m3/s)) and return a Series of
+    annual maxima, excluding partial years with < MIN_MONTHS_FOR_COMPLETE_YEAR
+    distinct months of data.
     """
-    if not (PIL_AVAILABLE and EASYOCR_AVAILABLE):
-        return None
+    df = pd.read_csv(io.BytesIO(csv_bytes), parse_dates=["Date"])
+    df.columns = ["date", "q"]
+    df = df.dropna(subset=["q"])
+    df["year"] = df["date"].dt.year
 
-    h = img_array.shape[0]
-    img = Image.fromarray(img_array)
-    left_strip = img.crop((0, 0, 300, h))
-    left_strip.save("/tmp/_dfo_axis.png")
-
-    reader = get_ocr_reader()
-    results = reader.readtext("/tmp/_dfo_axis.png", detail=1)
-
-    axis_points = []
-    for bbox, text, conf in results:
-        clean = text.replace(",", "").replace(" ", "")
-        if re.match(r"^\d{3,6}$", clean) and conf > 0.4:
-            val = int(clean)
-            if 50 <= val <= 10_000_000:
-                y_center = (bbox[0][1] + bbox[2][1]) / 2
-                axis_points.append((y_center, val))
-
-    if len(axis_points) < 2:
-        return None
-
-    ys = np.array([p[0] for p in axis_points])
-    qs = np.array([p[1] for p in axis_points])
-    slope, intercept = np.polyfit(ys, qs, 1)
-    return slope, intercept
+    month_coverage = df.groupby("year")["date"].apply(
+        lambda s: s.dt.month.nunique()
+    )
+    complete = month_coverage[month_coverage >= MIN_MONTHS_FOR_COMPLETE_YEAR].index
+    ams = (
+        df[df["year"].isin(complete)]
+        .groupby("year")["q"]
+        .max()
+        .dropna()
+    )
+    return ams
 
 
-def _row_medians(img_array, x_start=350):
-    """Return per-row median R, G, B arrays across the chart area (skip axis strip)."""
-    chart = img_array[:, x_start:, :]
-    r = np.median(chart[:, :, 0], axis=1)
-    g = np.median(chart[:, :, 1], axis=1)
-    b = np.median(chart[:, :, 2], axis=1)
-    return r, g, b
-
-
-def extract_thresholds_from_image(img_url):
+def _fit_and_compute(ams: pd.Series) -> tuple[dict, str]:
     """
-    Download threshold chart image and extract 5 category thresholds from
-    the coloured background bands using image analysis.
-    Returns {category: m3s} or None.
+    Fit GEV (if record long enough and shape sane) else Gumbel.
+    Returns (thresholds_dict, method_label).
     """
-    if not (PIL_AVAILABLE and EASYOCR_AVAILABLE):
-        print(f"    Image analysis unavailable (pip install Pillow easyocr). URL: {img_url}")
-        return None
+    data = ams.values
+    n    = len(data)
+    method = None
 
-    print(f"    Downloading image: {img_url}")
-    resp = requests.get(img_url, headers=HEADERS, timeout=30)
-    resp.raise_for_status()
+    if n >= MIN_YEARS_FOR_GEV:
+        try:
+            xi, loc, scale = stats.genextreme.fit(data)
+            if abs(xi) > GEV_SHAPE_LIMIT:
+                raise ValueError(f"Degenerate shape ξ={xi:.3f}")
+            # confirmed good fit — use GEV
+            quantile = lambda T: float(
+                stats.genextreme.ppf(1 - 1 / T, xi, loc=loc, scale=scale)
+            )
+            method = f"GEV-MLE (ξ={xi:.3f}, μ={loc:.2f}, σ={scale:.2f}, n={n})"
+        except Exception:
+            xi = None  # fall through to Gumbel
 
-    img = Image.open(io.BytesIO(resp.content)).convert("RGB")
-    arr = np.array(img)
-    h, w = arr.shape[:2]
+    if method is None:
+        loc, scale = stats.gumbel_r.fit(data)
+        quantile = lambda T: float(
+            loc + scale * (-np.log(-np.log(1 - 1 / T)))
+        )
+        method = f"Gumbel-MLE (μ={loc:.2f}, β={scale:.2f}, n={n})"
 
-    # 1. Build discharge ↔ pixel-y linear scale from OCR'd y-axis
-    scale = _build_axis_scale(arr)
-    if scale is None:
-        print("    Could not read y-axis labels — skipping image threshold extraction")
-        return None
-
-    slope, intercept = scale
-    def px_to_q(y):
-        return slope * y + intercept
-
-    # 2. Row-median colours in the chart body
-    row_r, row_g, row_b = _row_medians(arr)
-    sat = (np.maximum(np.maximum(row_r, row_g), row_b)
-           - np.minimum(np.minimum(row_r, row_g), row_b))
-
-    # 3. Coloured region = where saturation > 12 across chart width
-    colored = sat > 12
-    colored_ys = np.where(colored)[0]
-    if len(colored_ys) == 0:
-        print("    No coloured band region found in image")
-        return None
-
-    band_top = int(colored_ys[0])
-    band_bottom = int(colored_ys[-1])
-    print(f"    Coloured region: y={band_top}–{band_bottom}  "
-          f"({px_to_q(band_top):.0f}–{px_to_q(band_bottom):.0f} m³/s)")
-
-    # threshold_1 = bottom of the coloured region (where category 1 begins)
-    threshold_1 = px_to_q(band_bottom)
-
-    # 4. Find colour transition rows within the coloured region
-    # Use R-B (warm/cool) and G channels as colour signature.
-    rb = row_r - row_b   # purple → negative, yellow → ~+23, red → ~+62
-    g_ch = row_g
-
-    # Detect large jumps in R-B between consecutive coloured rows
-    transitions = []
-    prev_rb = rb[band_top]
-    prev_g = g_ch[band_top]
-    for y in range(band_top + 1, band_bottom + 1):
-        if not colored[y]:
-            continue
-        d_rb = abs(float(rb[y]) - float(prev_rb))
-        d_g  = abs(float(g_ch[y]) - float(prev_g))
-        if d_rb > 15 or d_g > 15:
-            transitions.append(y)
-        prev_rb = rb[y]
-        prev_g = g_ch[y]
-
-    # Merge transitions that are close together (within 5 px)
-    merged = []
-    for t in transitions:
-        if merged and t - merged[-1] <= 5:
-            merged[-1] = (merged[-1] + t) // 2
-        else:
-            merged.append(t)
-
-    print(f"    Colour transitions at y: {merged}  "
-          f"≈ {[f'{px_to_q(y):.0f}' for y in merged]} m³/s")
-
-    # The 4 inner transitions (between 5 bands) give thresholds 2–5.
-    # Keep only the top 4 (highest discharge) if more found.
-    inner = sorted(merged)[:4]   # ascending y = descending discharge
-    thresholds_raw = [threshold_1] + [px_to_q(y) for y in inner]
-    thresholds_raw.sort()
-
-    if len(thresholds_raw) < 5:
-        print(f"    Only {len(thresholds_raw)} thresholds found (need 5)")
-        return None
-
-    result = {i: round(v, 1) for i, v in enumerate(thresholds_raw[:5], start=1)}
-    print(f"    Extracted thresholds: { {k: f'{v:.0f}' for k, v in result.items()} }")
-    return result
+    thresholds = {
+        key: round(quantile(T), 2)
+        for T, key in FLOOD_RETURN_PERIODS.items()
+    }
+    return thresholds, method
 
 
-def try_html_thresholds(html):
-    """Try HTML table parse for thresholds. Returns {cat: m3s} or None."""
-    soup = BeautifulSoup(html, "html.parser")
-    for table in soup.find_all("table"):
-        thresholds = {}
-        for row in table.find_all("tr"):
-            cells = [c.get_text(strip=True) for c in row.find_all(["td", "th"])]
-            text = " ".join(cells).lower()
-            nums = re.findall(r"\b\d{2,7}(?:\.\d+)?\b", " ".join(cells))
-            if not nums:
-                continue
-            if any(k in text for k in ["1.5", "1-2 yr"]) and 1 not in thresholds:
-                thresholds[1] = float(nums[-1])
-            elif any(k in text for k in ["2-5", "2 yr"]) and 2 not in thresholds:
-                thresholds[2] = float(nums[-1])
-            elif "5-10" in text and 3 not in thresholds:
-                thresholds[3] = float(nums[-1])
-            elif any(k in text for k in ["10-20", "10-25"]) and 4 not in thresholds:
-                thresholds[4] = float(nums[-1])
-            elif any(k in text for k in ["20+", "25+", "50yr"]) and 5 not in thresholds:
-                thresholds[5] = float(nums[-1])
-        if len(thresholds) >= 4:
-            return thresholds
-    return None
-
-
-def get_thresholds(html, page_url):
+def compute_thresholds_from_csv(csv_bytes: bytes) -> tuple[dict, str]:
     """
-    Extract flood thresholds: HTML first, then image analysis fallback.
-    Returns ({category: m3s}, derived_from_str).
+    Public entry point.  Drop-in for the image-OCR path.
+
+    Returns:
+        thresholds  – {category: m3/s}  keys match existing schema
+        derived_from – human-readable string describing the method used
     """
-    thresholds = try_html_thresholds(html)
-    if thresholds and len(thresholds) >= 4:
-        print("    Thresholds: html_parse")
-        return thresholds, "html_parse"
+    ams = _extract_annual_maxima(csv_bytes)
+    if len(ams) < 3:
+        return {}, "csv_generated: insufficient annual maxima"
 
-    print("    HTML parse found no thresholds — trying image analysis")
-    img_url = find_threshold_image_url(html, page_url)
-    if img_url:
-        print(f"    Image: {img_url}")
-        thresholds = extract_thresholds_from_image(img_url)
-        if thresholds and len(thresholds) >= 4:
-            return thresholds, "image_ocr"
-    else:
-        print("    No threshold image found on page")
+    thresholds, method_label = _fit_and_compute(ams)
+    derived_from = f"csv_generated using {method_label}"
+    return thresholds, derived_from
 
+def get_thresholds(html, page_url, csv_bytes: bytes | None = None):
+    """
+    Extract flood thresholds. Tries CSV-based frequency analysis. 
+    Will return empty if this fails.
+    Returns ({category: m3/s}, derived_from_str).
+    """
+    if csv_bytes:
+        thresholds, derived_from = compute_thresholds_from_csv(csv_bytes)
+        if thresholds:
+            return thresholds, derived_from
     print("    WARNING: threshold extraction failed — thresholds will be empty")
     return {}, "unknown"
+
 
 
 # ---------------------------------------------------------------------------
@@ -439,7 +356,6 @@ def build_full_ts(raw_records, thresholds):
     """
     by_date = dict(raw_records)
     sorted_cats = sorted(thresholds.keys(), reverse=True)
-
     rows = []
     current = DATE_START
     while current <= DATE_END:
@@ -457,6 +373,7 @@ def build_full_ts(raw_records, thresholds):
             "qc_flag": "raw",
         })
         current += timedelta(days=1)
+
     return rows
 
 
@@ -558,7 +475,7 @@ def insert_thresholds(cur, station_uuid, thresholds, derived_from):
             """
             INSERT INTO flood_thresholds
                 (station_id, category, return_period_label, discharge_threshold_m3s, derived_from)
-            VALUES (%(sid)s, %(cat)s, %(label)s, %(val)s, %(from)s)
+            VALUES (%(sid)s, %(cat)s, %(label)s, %(val)s, %(derived_from)s)
             ON CONFLICT (station_id, category) DO UPDATE
                 SET discharge_threshold_m3s = EXCLUDED.discharge_threshold_m3s,
                     derived_from            = EXCLUDED.derived_from
@@ -568,42 +485,43 @@ def insert_thresholds(cur, station_uuid, thresholds, derived_from):
                 "cat": cat,
                 "label": RETURN_PERIOD_LABELS.get(cat, f"category_{cat}"),
                 "val": value,
-                "from": derived_from,
+                "derived_from": derived_from,
             },
         )
 
+
+from psycopg2.extras import execute_values
 
 def insert_discharge_ts(cur, station_uuid, source_id, ts_rows):
-    for row in ts_rows:
-        cur.execute(
-            """
-            INSERT INTO discharge_ts
-                (station_id, obs_date, discharge_m3s, discharge_anomaly_pct,
-                 threshold_exceeded_category, qc_flag, source_id)
-            VALUES
-                (%(sid)s, %(date)s, %(dis)s, NULL, %(cat)s, %(qc)s, %(src)s)
-            ON CONFLICT (station_id, obs_date) DO NOTHING
-            """,
-            {
-                "sid": station_uuid,
-                "date": row["obs_date"],
-                "dis": row["discharge_m3s"],
-                "cat": row["threshold_exceeded_category"],
-                "qc": row["qc_flag"],
-                "src": source_id,
-            },
+    execute_values(cur, """
+        INSERT INTO discharge_ts
+            (station_id, obs_date, discharge_m3s, discharge_anomaly_pct,
+             threshold_exceeded_category, qc_flag, source_id)
+        VALUES %s
+        ON CONFLICT (station_id, obs_date) DO NOTHING
+    """,
+    [
+        (
+            station_uuid,
+            row["obs_date"],
+            row["discharge_m3s"],
+            None,
+            row["threshold_exceeded_category"],
+            row["qc_flag"],
+            source_id,
         )
-
+        for row in ts_rows
+    ])
 
 def insert_flood_events(cur, station_uuid, events):
     for ev in events:
         cur.execute(
             """
             INSERT INTO flood_events
-                (event_id, station_id, flood_start, flood_end, duration_days,
+                (event_id, station_id, flood_start, flood_end,
                  peak_discharge_m3s, peak_date, max_category, detection_method)
             VALUES
-                (%(eid)s, %(sid)s, %(start)s, %(end)s, %(dur)s,
+                (%(eid)s, %(sid)s, %(start)s, %(end)s,
                  %(peak_q)s, %(peak_d)s, %(max_cat)s, 'threshold_exceedance')
             ON CONFLICT (event_id) DO NOTHING
             """,
@@ -612,13 +530,11 @@ def insert_flood_events(cur, station_uuid, events):
                 "sid": station_uuid,
                 "start": ev["flood_start"],
                 "end": ev["flood_end"],
-                "dur": ev["duration_days"],
                 "peak_q": ev["peak_discharge_m3s"],
                 "peak_d": ev["peak_date"],
                 "max_cat": ev["max_category"],
             },
         )
-
 
 def get_already_processed(conn):
     with conn.cursor() as cur:
@@ -632,14 +548,11 @@ def get_already_processed(conn):
 # Single station pipeline
 # ---------------------------------------------------------------------------
 
+# ── process_station ───────────────────────────────────────────────────────────
 def process_station(rec, dry_run, conn, source_id):
-    """
-    Run full pipeline for one station.
-    Returns (ts_count, event_count, thresholds_dict, error_or_None).
-    """
-    sid = rec["station_id"]
+    sid        = rec["station_id"]
     river_name = rec.get("river_name") or f"Station {sid}"
-    lat, lon = rec.get("lat"), rec.get("lon")
+    lat, lon   = rec.get("lat"), rec.get("lon")
 
     if lat is None or lon is None:
         return 0, 0, {}, "Missing coordinates"
@@ -649,17 +562,29 @@ def process_station(rec, dry_run, conn, source_id):
     except requests.RequestException as e:
         return 0, 0, {}, f"Page fetch failed: {e}"
 
-    thresholds, derived_from = get_thresholds(html, final_url)
-
+    # ── fetch CSV first so get_thresholds can use it ──────────────────────────
     csv_url = find_csv_url(html)
-    if not csv_url:
+    csv_bytes = None
+    if csv_url:
+        print(f"  CSV: {csv_url}")
+        try:
+            csv_bytes = fetch_csv_bytes(csv_url)   # new helper — see below
+            time.sleep(2)
+        except Exception as e:
+            print(f"  CSV fetch failed: {e}")
+
+    # pass raw bytes into get_thresholds; it handles None gracefully
+    thresholds, derived_from = get_thresholds(html, final_url, csv_bytes)
+    if not thresholds:
+        return 0, 0, {}, "Threshold extraction failed"
+
+    if csv_bytes is None:
         return 0, 0, thresholds, "No discharge CSV URL found on station page"
 
-    print(f"  CSV: {csv_url}")
     try:
-        raw_records = fetch_and_parse_csv(csv_url)
+        raw_records = parse_csv_from_bytes(csv_bytes)   # refactored — see below
     except Exception as e:
-        return 0, 0, thresholds, f"CSV fetch/parse failed: {e}"
+        return 0, 0, thresholds, f"CSV parse failed: {e}"
 
     all_dates = [d for d, _ in raw_records]
     record_start = min(all_dates) if all_dates else None
@@ -688,6 +613,33 @@ def process_station(rec, dry_run, conn, source_id):
     conn.commit()
     return len(ts_rows), len(events), thresholds, None
 
+import time
+
+def fetch_csv_bytes(csv_url: str, retries: int = 5) -> bytes:
+    for attempt in range(retries):
+        try:
+            resp = requests.get(csv_url, timeout=30)
+            resp.raise_for_status()
+            return resp.content
+        except requests.exceptions.HTTPError as e:
+            if resp.status_code == 429:
+                wait = 2 ** attempt
+                print(f"  Rate limited — waiting {wait}s before retry {attempt+1}/{retries}")
+                time.sleep(wait)
+            else:
+                raise
+    raise requests.exceptions.HTTPError(f"Failed after {retries} retries: {csv_url}")
+
+def parse_csv_from_bytes(csv_bytes: bytes) -> list[tuple]:
+    """
+    Replaces fetch_and_parse_csv(url).
+    Parses bytes → [(date, value), ...] matching your existing return type.
+    """
+    import io
+    df = pd.read_csv(io.BytesIO(csv_bytes), parse_dates=["Date"])
+    df.columns = ["date", "q"]
+    df = df.dropna(subset=["q"])
+    return list(zip(df["date"].dt.date, df["q"]))
 
 # ---------------------------------------------------------------------------
 # Main
