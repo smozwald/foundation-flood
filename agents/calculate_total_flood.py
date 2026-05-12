@@ -59,9 +59,11 @@ CREATE TABLE IF NOT EXISTS zone_flood_analysis (
     dry_start         date,
     dry_end           date,
     dry_scenes_json   jsonb,
-    wet_scene_date    date,
-    wet_method        text,
-    processed_at      timestamptz DEFAULT now(),
+    wet_scene_date        date,
+    wet_method            text,
+    peak_discharge_date   date,
+    peak_discharge_m3s    float,
+    processed_at          timestamptz DEFAULT now(),
     UNIQUE (zone_id, flood_event_id)
 )
 """
@@ -70,6 +72,11 @@ CREATE TABLE IF NOT EXISTS zone_flood_analysis (
 def ensure_table(conn):
     with conn.cursor() as cur:
         cur.execute(DDL_ZONE_FLOOD_ANALYSIS)
+        cur.execute("""
+            ALTER TABLE zone_flood_analysis
+                ADD COLUMN IF NOT EXISTS peak_discharge_date date,
+                ADD COLUMN IF NOT EXISTS peak_discharge_m3s  float
+        """)
     conn.commit()
 
 
@@ -226,7 +233,7 @@ def build_dry_composite(s1_col, dry_start, dry_end):
 
 
 def build_wet_scene(s1_col, peak_date):
-    window_start = peak_date - pd.Timedelta(days=MAX_WET_WINDOW_DAYS)
+    window_start = peak_date
     window_end   = peak_date + pd.Timedelta(days=MAX_WET_WINDOW_DAYS)
     wet_col = s1_col.filter(ee.Filter.date(
         window_start.strftime('%Y-%m-%d'),
@@ -295,13 +302,15 @@ def write_result(conn, record):
                 zone_id, flood_event_id, flood_start, flood_end, max_category,
                 status, fail_reason, otsu_thresh_db, otsu_valley_ratio,
                 flooded_agri_px, total_agri_px, flooded_agri_pct,
-                dry_start, dry_end, dry_scenes_json, wet_scene_date, wet_method
+                dry_start, dry_end, dry_scenes_json, wet_scene_date, wet_method,
+                peak_discharge_date, peak_discharge_m3s
             ) VALUES (
                 %(zone_id)s, %(flood_event_id)s, %(flood_start)s, %(flood_end)s,
                 %(max_category)s, %(status)s, %(fail_reason)s, %(otsu_thresh_db)s,
                 %(otsu_valley_ratio)s, %(flooded_agri_px)s, %(total_agri_px)s,
                 %(flooded_agri_pct)s, %(dry_start)s, %(dry_end)s,
-                %(dry_scenes_json)s::jsonb, %(wet_scene_date)s, %(wet_method)s
+                %(dry_scenes_json)s::jsonb, %(wet_scene_date)s, %(wet_method)s,
+                %(peak_discharge_date)s, %(peak_discharge_m3s)s
             )
             ON CONFLICT (zone_id, flood_event_id) DO UPDATE
                 SET status            = EXCLUDED.status,
@@ -314,9 +323,11 @@ def write_result(conn, record):
                     dry_start         = EXCLUDED.dry_start,
                     dry_end           = EXCLUDED.dry_end,
                     dry_scenes_json   = EXCLUDED.dry_scenes_json,
-                    wet_scene_date    = EXCLUDED.wet_scene_date,
-                    wet_method        = EXCLUDED.wet_method,
-                    processed_at      = now()
+                    wet_scene_date        = EXCLUDED.wet_scene_date,
+                    wet_method            = EXCLUDED.wet_method,
+                    peak_discharge_date   = EXCLUDED.peak_discharge_date,
+                    peak_discharge_m3s    = EXCLUDED.peak_discharge_m3s,
+                    processed_at          = now()
         """, record)
     conn.commit()
 
@@ -438,18 +449,21 @@ def main():
                     'flood_start':      flood_start.date(),
                     'flood_end':        flood_end.date(),
                     'max_category':     int(max_category) if pd.notna(max_category) else None,
-                    'otsu_thresh_db':   None, 'otsu_valley_ratio': None,
-                    'flooded_agri_px':  None, 'total_agri_px':     None,
-                    'flooded_agri_pct': None,
-                    'dry_start':        None, 'dry_end': None,
-                    'dry_scenes_json':  None, 'wet_scene_date': None,
-                    'wet_method':       None,
+                    'otsu_thresh_db':       None, 'otsu_valley_ratio':    None,
+                    'flooded_agri_px':      None, 'total_agri_px':        None,
+                    'flooded_agri_pct':     None,
+                    'dry_start':            None, 'dry_end':              None,
+                    'dry_scenes_json':      None, 'wet_scene_date':       None,
+                    'wet_method':           None,
+                    'peak_discharge_date':  None, 'peak_discharge_m3s':   None,
                 }
 
-                peak_date, _ = get_peak_discharge_date(
+                peak_date, peak_q = get_peak_discharge_date(
                     zone['station_id'], flood_start, flood_end)
                 if peak_date is None:
                     peak_date = flood_start
+                base['peak_discharge_date'] = peak_date.date() if peak_date is not None else None
+                base['peak_discharge_m3s']  = peak_q
 
                 window = get_preseasonal_dry_window(flood_start, zone['station_id'])
                 if window is None:
