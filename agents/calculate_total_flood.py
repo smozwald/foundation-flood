@@ -38,7 +38,7 @@ DRY_N_WEEKS           = 4
 MAX_WET_WINDOW_DAYS   = 12
 OTSU_BUCKETS          = 256
 OTSU_MAX_THRESHOLD    = -0.5
-OTSU_MIN_VALLEY_RATIO = 0.75
+
 # ──────────────────────────────────────────────────────────────────────────────
 
 DDL_ZONE_FLOOD_ANALYSIS = """
@@ -275,7 +275,7 @@ def compute_flood_mask(wet_db, dry_db, zone_geom, best_scene, perm_water_mask):
     if hist_raw is None:
         return None, None, None, None
     thresh, valley_ratio = otsu_threshold(hist_raw)
-    if thresh > OTSU_MAX_THRESHOLD or valley_ratio >= OTSU_MIN_VALLEY_RATIO:
+    if thresh > OTSU_MAX_THRESHOLD:
         return None, change, thresh, valley_ratio
     flood_mask = change.lt(thresh).clip(zone_geom)
     return flood_mask, change, thresh, valley_ratio
@@ -328,6 +328,7 @@ def write_result(conn, record):
                     peak_discharge_date   = EXCLUDED.peak_discharge_date,
                     peak_discharge_m3s    = EXCLUDED.peak_discharge_m3s,
                     processed_at          = now()
+                WHERE zone_flood_analysis.status = 'FAIL'
         """, record)
     conn.commit()
 
@@ -360,6 +361,15 @@ def main():
     try:
         with psycopg2.connect(CONN_STRING) as conn:
             ensure_table(conn)
+
+            existing_ok = set(
+                pd.read_sql(
+                    "SELECT zone_id, flood_event_id::text FROM zone_flood_analysis"
+                    " WHERE status = 'SUCCESS'",
+                    conn,
+                ).itertuples(index=False, name=None)
+            )
+            print(f"Already SUCCESS: {len(existing_ok)} pairs — will skip these")
 
             station_ids_df = pd.read_sql("""
                 SELECT DISTINCT ds.station_id::text
@@ -438,6 +448,10 @@ def main():
                 flood_end    = row['flood_end']
                 max_category = row.get('max_category')
                 event_id     = row['event_id']
+
+                if (zone['zone_id'], event_id) in existing_ok:
+                    print(f"  {flood_start.date()} → SKIP (already SUCCESS)")
+                    continue
 
                 print(f"  {flood_start.date()} "
                       f"cat={int(max_category) if pd.notna(max_category) else '?'} ",
