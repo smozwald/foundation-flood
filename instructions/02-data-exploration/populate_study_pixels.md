@@ -1,4 +1,15 @@
 ## Purpose
+***
+UPDATE: READ BELOW CAREFULLY AND CONTINUE WORK FROM THE POINT I ASK.
+
+SECOND UPDATE: TERMINAL BROKE AT SOME POINT IN PROCESSING, YOU WERE AT TEST POINT FOR select_study_pixels.py. Review code and continue with the test. DO NOT LOOK AT NOTEBOOKS, YOU SHOULD ONLY NEED THIS FILE!!!! ALSO THE TEST SHOULD BE FOR ONE SUBZONE ONLY, ATM THERE ARE TOO MANY. It also needs to include a data_source and link to either an existing one (to create), with a methodoloy for both how agri_metadata_id and topo_metadata_id are generated.
+You have I think done the create_study_zone, and we want to move on to select_study_pixels, (you've started on this but atm I dont think it will actually populate our static pixels succesfully, I ran a test and it does add them but without the key things like twi, etc.
+
+Can you update so that it will look recursively through the db in order to find the river info to populate the metrics shown in pixels_static table such that they aren't null. Then this script should run with user input specifying maybe a regex on which study_pixels to generate (e.g. Every 'success' in zone_flood_analysis with zone_id containing 'initial')
+
+UPDATE THREE: STILL APPEARS TO BE RUNNING, BUT NOT WELL AS WE DONT HAVE THE AGRI_METADATA_ID or other METADATA_ID columns filled. This is important! FIRST CLEAR ALL DATA IN THE TABLE, THEN RUN THE TEST AGAIN WHICH NOW SHOULD BE OK BUT WITH THIS FUNCTIONALITY ADDED. CHECK AFTER SPECIFICALLY THAT THESE TABLES ARENT NULL AND TROUBLESHOOT
+***
+
 Output code from several cells in notebooks/02_database_exploration.ipynb into reproducible python files, and be populate 
 
 Output file #1: Create Study Zone
