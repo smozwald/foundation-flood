@@ -28,7 +28,7 @@ Methodology of a physics-informed solution using spatiotemporal embeddings to is
 ## Phase 1 - Notebook 01: Database Setup & GEE Ground Truth
 - [x] Set up cloud environment on Google Earth Engine (GEE) and BigQuery
 - [x] **Database Infrastructure:** Deploy PostGIS-enabled Supabase instance and define schemas for longitudinal pixel data
-- [x] **River Data Collection:** Utilise the Dartmouth Flood Observatory to collect our rivers. Discrete Claud Agent.
+- [x] **River Data Collection:** Utilise the Dartmouth Flood Observatory to collect our rivers. Discrete Claud Agent. Initially ingested discharge time series, flood events, and threshold values for all 335 DFO stations globally. Subsequently trimmed to 13 Pakistan-focused stations (Chenab, Indus, Jhelum, Ravi, and Indus Delta) to stay within Supabase free-tier storage limits, removing ~1.3M `discharge_ts` rows, 12K `flood_events`, and 322 stations that had no downstream pixel data.
 - [ ] **GEE SAR Pipeline:** Extract and process Sentinel-1 GRD (2015–2024) on-the-fly (Speckle filtering, Terrain Correction). Disrete Claude Agent.
 - [ ] **Water Masking:** Execute Otsu thresholding on GEE to generate binary inundation masks. Discrete Claude Agent.
 - [ ] **Data Ingestion:** Stream GEE results and Topographic metrics (HAND, TWI) into Supabase static and history tables
