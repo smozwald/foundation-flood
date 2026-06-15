@@ -1,1 +1,3 @@
 .env
+temp_images/
+reports/*.pdf
