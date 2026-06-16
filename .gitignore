@@ -1,3 +1,4 @@
 .env
 temp_images/
 reports/*.pdf
+gcp-key.json

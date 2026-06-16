@@ -437,7 +437,15 @@ def main():
     print(f"Dry-run     : {args.dry_run}")
     print(f"Test        : {args.test}\n")
 
-    ee.Initialize(project='foundation-flood')
+    key_path = os.path.join(os.path.dirname(__file__), '..', 'gcp-key.json')
+    if os.path.exists(key_path):
+        import json
+        with open(key_path) as f:
+            key_data = json.load(f)
+        creds = ee.ServiceAccountCredentials(key_data['client_email'], key_path)
+        ee.Initialize(creds, project='foundation-flood')
+    else:
+        ee.Initialize(project='foundation-flood')
 
     try:
         with psycopg2.connect(CONN_STRING) as conn:
