@@ -27,9 +27,9 @@ A hazard-downscaling approach: an external pre-season hazard product sets the fl
 - [x] Set up cloud environment on Google Earth Engine (GEE) and BigQuery
 - [x] **Database Infrastructure:** Deploy PostGIS-enabled Supabase instance and define schemas for longitudinal pixel data
 - [x] **River Data Collection:** Utilise the Dartmouth Flood Observatory to collect our rivers. Discrete Claud Agent. Initially ingested discharge time series, flood events, and threshold values for all 335 DFO stations globally. Subsequently trimmed to 13 Pakistan-focused stations (Chenab, Indus, Jhelum, Ravi, and Indus Delta) to stay within Supabase free-tier storage limits, removing ~1.3M `discharge_ts` rows, 12K `flood_events`, and 322 stations that had no downstream pixel data.
-- [ ] **GEE SAR Pipeline:** Extract and process Sentinel-1 GRD (2015–2024) on-the-fly (Speckle filtering, Terrain Correction). Disrete Claude Agent.
-- [ ] **Water Masking:** Execute Otsu thresholding on GEE to generate binary inundation masks. Discrete Claude Agent.
-- [ ] **Data Ingestion:** Stream GEE results and Topographic metrics (HAND, TWI) into Supabase static and history tables
+- [x] **GEE SAR Pipeline:** Extract and process Sentinel-1 GRD (2015–2024) on-the-fly (Speckle filtering, Terrain Correction). Disrete Claude Agent.
+- [x] **Water Masking:** Execute Otsu thresholding on GEE to generate binary inundation masks. Discrete Claude Agent.
+- [x] **Data Ingestion:** Stream GEE results and Topographic metrics (HAND, TWI) into Supabase static and history tables
 
 ## Phase 2 - Notebook 04: Field-Level Disaggregation Model
 The user picks a return period; an *external* hazard model supplies the expected flooded area (Y%); our model disaggregates that Y% across fields by local vulnerability rank, calibrated so the field-average equals Y%. Output: a ranked list of which fields flood first as water rises. Full plan: `instructions/phase_2_plan.md`.
