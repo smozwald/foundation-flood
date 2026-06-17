@@ -1,27 +1,25 @@
 # foundation-flood
 
-This portfolio piece aims to utilize foundation vision models to improve forecasting of crop yield failure, focusing on the relationship between soil memory and inundation in the Skåne region, Sweden.
+A portfolio project using satellite earth observation and foundation-model embeddings to rank agricultural flood vulnerability at field level, for rivers in Pakistan (Chenab and Indus basins).
 
 # Introduction
-Flood risk poses a great economic threat to agricultural productivity and secure food systems. Climate change is enhancing this risk, with ever-increasing occurence of previously low incidence floods. Whilst reducing the impacts of climate change is the best long-term option to mitigate flood damage, satellite-based flood risk products can help farmers and other stakeholders better prepare for possible flood damage.
-The purpose of this project is thus to assess how foundation model embeddings may improve pre-season flood risk. We will focus on the sentinel-1/sentinel-2 datasets available from 2015 onwards, with processing and data storage performed in the cloud. Utilising AI agents, we will collect data for many rivers using Claude AI agents.
+Flood risk poses a great economic threat to agricultural productivity and food security. Climate change is increasing this risk, with previously rare floods occurring more often. While mitigating climate change is the best long-term defence, satellite-based flood-risk products can help farmers and other stakeholders prepare for likely flood damage.
+This project asks whether foundation-model embeddings improve *pre-season* flood-risk assessment. We use Sentinel-1 / Sentinel-2 imagery (2015 onwards), with cloud-based processing and storage, and Claude AI agents to collect data across many rivers.
 
-The DFO-FLood observatory provides discharge values for many rivers across the world, also providing information on threshold values.
+The Dartmouth Flood Observatory (DFO) provides discharge time series and return-period thresholds for rivers worldwide.
 <img width="3600" height="1200" alt="image" src="https://github.com/user-attachments/assets/6bd87ce1-8417-4a68-8f72-8dc1276b2d83" />
 
-Our modelling will involve first collecting flood dates and values using the DFO-Observatroy for many rivers and storing them in a supabase postGIS database. Database plan below
+The pipeline first collects flood dates and discharge values from the DFO and stores them in a Supabase PostGIS database (schema below).
 <img width="1024" height="559" alt="image" src="https://github.com/user-attachments/assets/771b16e6-f4c5-40ed-a594-91e57006f49f" />
 
-Following this we will collect information on river geomorphology, rainfall, and satellite images representing both a baseline and flood extent in the week before and weeks following a flood.
-The below section on modelling is subject to being changed at a later point. The plan is to incorporate 
-New advances in machine learning allow for further iteration on flood models. In the context of agricultural risk, floods are an important natural hazard to account for. What this project investigates is the potential to assess risk for agricultural fields under various rainfall scenarios, utilizing typical data sources and features in flood modelling (Topographic Water Index, distance to river, precipitation) as well as Google AlphaEarth Embeddings for the year preceding the agricultural season. For the predictive y-variable (flooded area), we estimate this for past years using the Privthi water mapping model, which achieves high accuracy at detecting flooded pixels utilizing Sentinel-2 data.
-The ultimate goal is to create a model utilizing as a base input, the AlphaEarth embeddings + additional data, and then provide continuous rainfall on a per pixel basis, predicting when a pixel may become flooded.
+It then collects river geomorphology, terrain metrics, and Sentinel SAR imagery representing a dry-season baseline and the flood extent around each event. Historical per-pixel flood labels are derived by Otsu thresholding on Sentinel-1 backscatter.
 
-Data and Models are to be logged using MLOps, as part of creating a good portfolio piece.
+**Architecture (revised after Phase 1).** Phase 1 showed that predicting *how much* area floods from local features alone does not work (field-level magnitude R² ≈ −0.27). Phase 2 therefore decouples magnitude from spatial pattern: the user picks a return period, an **external** hazard product supplies the expected flooded area (Y%), and **our** model disaggregates that Y% across fields by local vulnerability rank — using terrain features (TWI, HAND, distance to river) and AlphaEarth / Clay / Prithvi embeddings from the year preceding the season — calibrated so the field-average flooded area equals Y%. The output is a ranked, actionable list of which fields flood first as water rises. See `instructions/phase_2_plan.md`.
 
+Data and models are tracked with MLflow as part of building a credible portfolio piece.
 
 # Methodology
-Methodology of a physics-informed solution using spatiotemporal embeddings to isolate pre-season legacy risk from in-season rainfall spikes.
+A hazard-downscaling approach: an external pre-season hazard product sets the flooded-area magnitude, while spatiotemporal foundation-model embeddings and terrain features rank relative field vulnerability within that magnitude.
 
 # Plan
 
@@ -33,11 +31,16 @@ Methodology of a physics-informed solution using spatiotemporal embeddings to is
 - [ ] **Water Masking:** Execute Otsu thresholding on GEE to generate binary inundation masks. Discrete Claude Agent.
 - [ ] **Data Ingestion:** Stream GEE results and Topographic metrics (HAND, TWI) into Supabase static and history tables
 
-## Phase 2 - Notebook 02: Embedding Analysis & MLflow
-- [ ] **Foundation Benchmarking:** Use `rs-embed` to extract and compare Prithvi-EO-2.0 and Clay embeddings for pre-season windows
-- [ ] **Meteorological Join:** Integrate precipitation and discharge data with Supabase records via SQL views
-- [ ] **Experiment Tracking:** Configure MLflow to track model architectures, hyperparameters, and embedding versions
-- [ ] **Hypothesis Testing:** Compare baseline rainfall models against embedding-enriched models to validate the "Soil Memory" effect
+## Phase 2 - Notebook 04: Field-Level Disaggregation Model
+The user picks a return period; an *external* hazard model supplies the expected flooded area (Y%); our model disaggregates that Y% across fields by local vulnerability rank, calibrated so the field-average equals Y%. Output: a ranked list of which fields flood first as water rises. Full plan: `instructions/phase_2_plan.md`.
+
+- [ ] **External magnitude source:** Evaluate free pre-season hazard products (JRC/Copernicus, Google Flood Hub/GRRR) for Y% area flooded
+- [ ] **Switch to fields:** Download FoTW field polygons and aggregate pixel-level labels and features to field level
+- [ ] **Feature collection (field level):** ground truth, field static metrics, ndvi_premonsoon — zero-variance check before dropping any feature
+- [ ] **Baseline-first modelling:** terrain-only model first; **foundation embeddings (AlphaEarth / Prithvi-EO-2.0 / Clay via `rs-embed`) added last as an ablation**, kept only if they beat terrain-only
+- [ ] **Calibration layer:** distribute external Y% across fields by vulnerability rank, constrained so field-average = Y%
+- [ ] **Experiment tracking:** MLflow from the first run (params, feature set, metrics)
+- [ ] **Ranking validation:** confirm field rank generalises across zones (location-disjoint split) and beats a uniform-spread baseline
 
 ## Phase 3 - Scriptification & System Engineering
 - [ ] **Modularization:** Refactor notebook logic into a clean Python package structure (`/src`)
